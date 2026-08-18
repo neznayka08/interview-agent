@@ -69,3 +69,18 @@ def ask_model(messages_list, temperature=0.7):
 question = ask_model(messages, TEMP_QUESTION)
 print(f'Тема: {topic}')
 print(question)
+
+print("Жду ответ, если уже не нужно напиши 'выход'")
+while True:
+    user_answer = input("Ответ: ").strip()
+    if user_answer.lower() in ["exit", "quit", "выход"]:
+        print('пока')
+        sys.exit(0)
+    if not user_answer:
+        print('Ответ не может быть пустым')
+    else:
+        break
+
+
+
+
