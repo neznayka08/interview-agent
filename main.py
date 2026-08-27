@@ -67,7 +67,7 @@ GRADER_PROMPT = """Роль. Ты технический эксперт, про�
   "score": 0
 }
 covered_points - пункты которые кандидат покрыл
-missed_points - пункты которые кандидат упустил
+missed_points - пункты которые кандидат упустил. При нулевом покрытии все ключевые пункты идут в missed_points
 comment - краткий комментарий, одно-два предложения а счет ответа
 score - целое число от 0 до 5, без кавычек, без диапазона.
 Не оборачивай в markdown, не пиши ничего до и после."""
@@ -108,22 +108,40 @@ def ask_model(messages_list, temperature=0.7, json_mode=False):
     # print(data)
     return data['choices'][0]['message']['content']
 
+def extract_json(text: str):
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start == -1 or end == -1:
+        print("JSON в ответе нет")
+        print(f'{text}')
+        return None
+
+    cleaned = text[start:end + 1]
+
+    try:
+        pars = json.loads(cleaned)
+    except json.JSONDecodeError as j:
+        print(f"{cleaned}")
+        print(f"{j}")
+        return None
+    return pars
+
+def join_list_field(data,field_name):
+    field_name_raw = data.get(field_name, [])
+    if not isinstance(field_name_raw, list):
+        print(f"поле {field_name} пришло в неверном формате")
+        print(field_name_raw)
+        factor = ""
+    else:
+        factor = ", ".join(field_name_raw)
+    return factor
+
 raw = ask_model(messages, TEMP_QUESTION, json_mode=True)
-start = raw.find("{")
-end = raw.rfind("}")
+parsed = extract_json(raw)
 
-if start == -1 or end == -1:
-    print("JSON в ответе нет")
-    print(f'{raw}')
-    sys.exit(1)
-
-cleaned = raw[start:end + 1]
-
-try:
-    parsed = json.loads(cleaned)
-except json.JSONDecodeError as j:
-    print(f"{cleaned}")
-    print(f"{j}")
+if parsed is None:
+    print("JSON с ошибками")
     sys.exit(1)
 
 question = parsed.get("question")
@@ -132,12 +150,7 @@ if not question:
     print(f'{parsed}')
     sys.exit(1)
 
-key_points_raw = parsed.get("key_points", [])
-if not isinstance(key_points_raw, list):
-    print("Ключевые пункты пришли в неверном формате")
-    key_points = ""
-else:
-    key_points = ", ".join(key_points_raw)
+key_points = join_list_field(parsed, field_name="key_points")
 
 print(f'Тема: {topic}')
 print(question)
@@ -153,6 +166,8 @@ while True:
     else:
         break
 
+
+
 grade_messages = [
     {"role": "system", "content": GRADER_PROMPT},
     {"role": "user", "content": f"""Тема: {topic}
@@ -166,4 +181,30 @@ grade_messages = [
 }
 ]
 grade = ask_model(grade_messages, TEMP_GRADING, json_mode=True)
-print(grade)
+parsed_grade = extract_json(grade)
+
+if parsed_grade is None:
+    print("JSON с ошибками")
+    sys.exit(1)
+
+covered_points = join_list_field(parsed_grade, field_name="covered_points")
+missed_points = join_list_field(parsed_grade, field_name="missed_points")
+comment = parsed_grade.get("comment")
+score_raw = parsed_grade.get("score")
+if isinstance(score_raw, int):
+    score = score_raw
+else:
+    try:
+        score = int(score_raw)
+    except (ValueError, TypeError):
+        print("Неверный формат оценки")
+        print(score_raw)
+        sys.exit(1)
+if not 0 <= score <= 5:
+    print("Неверный формат оценки")
+    sys.exit(1)
+
+print(f'Покрытые ответы: {covered_points}')
+print(f'Пропущенные ответы: {missed_points}')
+print(f'Комментарий: {comment}')
+print(f'Оценка: {score}')
