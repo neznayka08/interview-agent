@@ -44,13 +44,13 @@ GRADER_PROMPT = """Роль. Ты технический эксперт, про�
 Как засчитывать пункт. Смысл: пункт считается покрытым, если кандидат передал его суть — своими словами, другими терминами, в свёрнутом виде. Дословное совпадение не требуется. Отдельно: если кандидат сказал что-то верное, чего в списке нет, — это не ошибка, а плюс.
 Шкала оценивания:
 0 — не покрыт ни один, или ответ не по теме
-1–2 — покрыты единичные пункты
+1 — покрыт один пункт из списка
+2 — покрыто два пункта, но меньше половины
 3 — покрыта примерно половина
 4 — покрыты все существенные, упущено второстепенное
 5 — покрыты все пункты
 Фактическая ошибка снижает балл независимо от покрытия.
 Фактическая ошибка — это неверное утверждение в ответе; отсутствие информации ошибкой не считается и учитывается только в покрытии.
-Порядок вывода. Сначала пройдись по списку пунктов и отметь каждый как покрытый или нет; потом укажи фактические ошибки, если они есть; и только последним выстави балл одним целым числом.
 Ограничения:
 - Не хвалить авансом.
 - Называть конкретные пробелы, а не общие слова.
@@ -58,7 +58,19 @@ GRADER_PROMPT = """Роль. Ты технический эксперт, про�
 - Писать по-русски.
 - Не снижать балл за краткость, если суть передана — это устный ответ, а не статья.
 - Не снижать балл за формулировку, отличную от твоей.
-- Не выдумывать требований, которых нет в списке ключевых пунктов."""
+- Не выдумывать требований, которых нет в списке ключевых пунктов.
+Формат ответа. Верни СТРОГО JSON такой структуры:
+{
+  "covered_points": ["первый пункт которые покрыл", "второй пункт которые покрыл", "третий пункт которые покрыл"],
+  "missed_points": ["первый пункт которые упустил", "второй пункт которые упустил", "третий пункт которые упустил"],
+  "comment": "текст комментария",
+  "score": 0
+}
+covered_points - пункты которые кандидат покрыл
+missed_points - пункты которые кандидат упустил
+comment - краткий комментарий, одно-два предложения а счет ответа
+score - целое число от 0 до 5, без кавычек, без диапазона.
+Не оборачивай в markdown, не пиши ничего до и после."""
 
 TOPICS = ["эмбеддинги", "RAG", "метрики классификации", "system design", "pyspark", "CV", "NLP", "Classic ML"]
 TEMP_QUESTION = 0.7
@@ -73,12 +85,14 @@ messages = [
 ]
 
 
-def ask_model(messages_list, temperature=0.7):
+def ask_model(messages_list, temperature=0.7, json_mode=False):
     payload = {
         "model": MODEL_NAME,
         "messages": messages_list,
         "temperature": temperature
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     try:
         response = requests.post(url, json=payload, timeout=120)
@@ -94,12 +108,13 @@ def ask_model(messages_list, temperature=0.7):
     # print(data)
     return data['choices'][0]['message']['content']
 
-raw = ask_model(messages, TEMP_QUESTION)
+raw = ask_model(messages, TEMP_QUESTION, json_mode=True)
 start = raw.find("{")
 end = raw.rfind("}")
 
 if start == -1 or end == -1:
     print("JSON в ответе нет")
+    print(f'{raw}')
     sys.exit(1)
 
 cleaned = raw[start:end + 1]
@@ -107,12 +122,14 @@ cleaned = raw[start:end + 1]
 try:
     parsed = json.loads(cleaned)
 except json.JSONDecodeError as j:
+    print(f"{cleaned}")
     print(f"{j}")
     sys.exit(1)
 
 question = parsed.get("question")
 if not question:
     print("Нет вопроса")
+    print(f'{parsed}')
     sys.exit(1)
 
 key_points_raw = parsed.get("key_points", [])
@@ -148,5 +165,5 @@ grade_messages = [
 """
 }
 ]
-grade = ask_model(grade_messages, TEMP_GRADING)
+grade = ask_model(grade_messages, TEMP_GRADING, json_mode=True)
 print(grade)
