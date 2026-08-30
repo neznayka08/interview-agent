@@ -4,23 +4,31 @@ import random
 import sys
 
 import requests
+import psycopg2
 from dotenv import load_dotenv
 
 load_dotenv()
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
-if not OLLAMA_BASE_URL:
-    print("переменная OLLAMA_BASE_URL не задана, проверь файл .env")
-    sys.exit(1)
-print(f"Base URL: {OLLAMA_BASE_URL}")
 
-MODEL_NAME = os.getenv("MODEL_NAME")
-if not MODEL_NAME:
-    print("переменная MODEL_NAME не задана, проверь файл .env")
+def get_env(name: str, default: str | None = None) -> str:
+    value = os.getenv(name)
+    if value:
+        return value
+    if default is not None:
+        return default
+    print(f"переменная {name} не задана, проверь файл .env")
     sys.exit(1)
-print(f"Model Name: {MODEL_NAME}")
 
+
+OLLAMA_BASE_URL = get_env(name='OLLAMA_BASE_URL', default="http://localhost:11434")
+MODEL_NAME = get_env(name='MODEL_NAME')
 url = f"{OLLAMA_BASE_URL}/v1/chat/completions"
+PG_HOST = get_env(name='PG_HOST', default="localhost")
+PG_PORT = get_env(name='PG_PORT', default="5432")
+PG_DB_NAME = get_env(name='PG_DB_NAME')
+PG_USER = get_env(name='PG_USER')
+PG_PASSWORD = get_env(name='PG_PASSWORD')
+print(f"Конфигурация: модель {MODEL_NAME}, Ollama {OLLAMA_BASE_URL}, база {PG_DB_NAME} на {PG_HOST}:{PG_PORT}")
 
 SYSTEM_PROMPT = """Роль. Ты технический интервьюер, проводишь собеседование на позицию middle+ инженера по NLP и LLM.
 Задача. Твоя задача — задать кандидату один вопрос по указанной теме.
@@ -63,12 +71,12 @@ GRADER_PROMPT = """Роль. Ты технический эксперт, про�
 {
   "covered_points": ["первый пункт которые покрыл", "второй пункт которые покрыл", "третий пункт которые покрыл"],
   "missed_points": ["первый пункт которые упустил", "второй пункт которые упустил", "третий пункт которые упустил"],
-  "comment": "текст комментария",
+  "grader_comment": "текст комментария",
   "score": 0
 }
 covered_points - пункты которые кандидат покрыл
 missed_points - пункты которые кандидат упустил. При нулевом покрытии все ключевые пункты идут в missed_points
-comment - краткий комментарий, одно-два предложения а счет ответа
+grader_comment - краткий комментарий, одно-два предложения а счет ответа
 score - целое число от 0 до 5, без кавычек, без диапазона.
 Не оборачивай в markdown, не пиши ничего до и после."""
 
@@ -77,7 +85,6 @@ TEMP_QUESTION = 0.7
 TEMP_GRADING = 0.1
 
 topic = random.choice(TOPICS)
-
 
 messages = [
     {"role": "system", "content": SYSTEM_PROMPT},
@@ -108,6 +115,7 @@ def ask_model(messages_list, temperature=0.7, json_mode=False):
     # print(data)
     return data['choices'][0]['message']['content']
 
+
 def extract_json(text: str):
     start = text.find("{")
     end = text.rfind("}")
@@ -127,7 +135,8 @@ def extract_json(text: str):
         return None
     return pars
 
-def join_list_field(data,field_name):
+
+def join_list_field(data, field_name):
     field_name_raw = data.get(field_name, [])
     if not isinstance(field_name_raw, list):
         print(f"поле {field_name} пришло в неверном формате")
@@ -136,6 +145,7 @@ def join_list_field(data,field_name):
     else:
         factor = ", ".join(field_name_raw)
     return factor
+
 
 raw = ask_model(messages, TEMP_QUESTION, json_mode=True)
 parsed = extract_json(raw)
@@ -166,8 +176,6 @@ while True:
     else:
         break
 
-
-
 grade_messages = [
     {"role": "system", "content": GRADER_PROMPT},
     {"role": "user", "content": f"""Тема: {topic}
@@ -178,7 +186,7 @@ grade_messages = [
 
 Ответ кандидата: {user_answer}
 """
-}
+     }
 ]
 grade = ask_model(grade_messages, TEMP_GRADING, json_mode=True)
 parsed_grade = extract_json(grade)
@@ -189,7 +197,7 @@ if parsed_grade is None:
 
 covered_points = join_list_field(parsed_grade, field_name="covered_points")
 missed_points = join_list_field(parsed_grade, field_name="missed_points")
-comment = parsed_grade.get("comment")
+grader_comment = parsed_grade.get("grader_comment")
 score_raw = parsed_grade.get("score")
 if isinstance(score_raw, int):
     score = score_raw
@@ -206,5 +214,36 @@ if not 0 <= score <= 5:
 
 print(f'Покрытые ответы: {covered_points}')
 print(f'Пропущенные ответы: {missed_points}')
-print(f'Комментарий: {comment}')
+print(f'Комментарий: {grader_comment}')
 print(f'Оценка: {score}')
+
+sql = """INSERT INTO attempts (
+topic,
+question,
+user_answer,
+score,
+grader_comment,
+key_points,
+covered_points,
+missed_points
+) 
+VALUES (%s,%s,%s,%s,%s,%s,%s,%s)"""
+
+values = [topic,
+          question,
+          user_answer,
+          score,
+          grader_comment,
+          json.dumps(parsed.get("key_points")),
+          json.dumps(parsed_grade.get("covered_points")),
+          json.dumps(parsed_grade.get("missed_points"))]
+try:
+    with psycopg2.connect(host=PG_HOST,
+                          port=PG_PORT,
+                          user=PG_USER,
+                          password=PG_PASSWORD,
+                          dbname=PG_DB_NAME) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, values)
+except psycopg2.Error as err:
+    print('запись в базу не удалась, оценка при этом получена', err)
