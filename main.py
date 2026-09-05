@@ -5,11 +5,10 @@ import db
 import prompts
 import config
 import llm
+import utils
 
 
-def main():
-    topic = random.choice(prompts.TOPICS)
-
+def run_question(topic):
     messages = [
         {"role": "system", "content": prompts.SYSTEM_PROMPT},
         {"role": "user", "content": f"Тема: {topic}"}
@@ -20,19 +19,21 @@ def main():
 
     if parsed is None:
         print("JSON с ошибками")
-        sys.exit(1)
+        return None
 
     question = parsed.get("question")
     if not question:
         print("Нет вопроса")
         print(f'{parsed}')
-        sys.exit(1)
+        return None
 
     key_points = llm.join_list_field(parsed, field_name="key_points")
 
     print(f'Тема: {topic}')
     print(question)
     print("Жду ответ, если уже не нужно напиши 'выход'")
+
+    utils.clear_input_buffer()
 
     while True:
         user_answer = input("Ответ: ").strip()
@@ -61,7 +62,7 @@ def main():
 
     if parsed_grade is None:
         print("JSON с ошибками")
-        sys.exit(1)
+        return None
 
     covered_points = llm.join_list_field(parsed_grade, field_name="covered_points")
     missed_points = llm.join_list_field(parsed_grade, field_name="missed_points")
@@ -75,10 +76,10 @@ def main():
         except (ValueError, TypeError):
             print("Неверный формат оценки")
             print(score_raw)
-            sys.exit(1)
+            return None
     if not 0 <= score <= 5:
         print("Неверный формат оценки")
-        sys.exit(1)
+        return None
 
     print(f'Покрытые ответы: {covered_points}')
     print(f'Пропущенные ответы: {missed_points}')
@@ -96,6 +97,26 @@ def main():
                                )
     if not saved_db:
         print('Запись в базу не удалась, оценка при этом получена')
+
+    return score
+
+
+def main():
+    topics = random.sample(prompts.TOPICS, config.QUESTIONS_PER_SESSION)
+    scores = []
+    for number, topic in enumerate(topics, start=1):
+        print(f"Вопрос {number} из {config.QUESTIONS_PER_SESSION}")
+        score = run_question(topic)
+        if score is not None:
+            scores.append(score)
+        else:
+            print("Некорректный результат")
+    if not scores:
+        print('Ни один вопрос не удалось провести')
+    else:
+        avg_score = sum(scores) / len(scores)
+        print(f"Вопросов пройдено {len(scores)} из {config.QUESTIONS_PER_SESSION}")
+        print(f"Средний балл: {round(avg_score, 1)}")
 
 
 if __name__ == "__main__":

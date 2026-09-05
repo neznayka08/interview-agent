@@ -28,3 +28,5 @@ print(f"Конфигурация: модель {MODEL_NAME}, Ollama {OLLAMA_BASE
 
 TEMP_QUESTION = 0.7
 TEMP_GRADING = 0.1
+
+QUESTIONS_PER_SESSION = 2
