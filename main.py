@@ -7,6 +7,9 @@ import config
 import llm
 import utils
 
+WEIGHT_NEW_TOPIC = 8
+WEIGHT_BASE = 6
+
 
 def run_question(topic):
     messages = [
@@ -102,8 +105,17 @@ def run_question(topic):
 
 
 def main():
-    topics = random.sample(prompts.TOPICS, config.QUESTIONS_PER_SESSION)
     scores = []
+    weights = []
+    stats = db.get_topic_stats()
+    for t in prompts.TOPICS:
+        avg = stats.get(t)
+        if avg is None:
+            weights.append(WEIGHT_NEW_TOPIC)
+        else:
+            weights.append(WEIGHT_BASE - avg)
+
+    topics = random.choices(prompts.TOPICS, weights=weights, k=config.QUESTIONS_PER_SESSION)
     for number, topic in enumerate(topics, start=1):
         print(f"Вопрос {number} из {config.QUESTIONS_PER_SESSION}")
         score = run_question(topic)
